@@ -1,8 +1,12 @@
+<!-- owner:Tzuyi -->
+
+
+
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<title>自動抽獎系統</title>
+<title>XG50抽籤筒</title>
 <style>
   body {
     font-family: Arial, sans-serif;
@@ -81,19 +85,19 @@
 </style>
 </head>
 <body>
-<h1>自動抽獎系統</h1>
+<h1>XG50抽籤筒</h1>
 
 <div class="main-container">
   <!-- 左側容器 -->
   <div class="left-container">
     <!-- 左上：參加者名單 + 按鈕 -->
     <div class="box">
-      <h2>參加者名單</h2>
+      <h2>小夥伴</h2>
       <div class="participant-list" id="participantList"></div>
 
       <div style="text-align:center; margin-top:15px;">
-        <button onclick="startAutoDraw()">開始抽獎</button>
-        <button onclick="resetLottery()" class="reset">重置抽獎</button>
+        <button onclick="startAutoDraw()">開始抽籤</button>
+        <button onclick="resetLottery()" class="reset">重置</button>
         <div id="currentPrize" style="margin-top:10px;">按下開始抽獎</div>
         <div id="currentWinner" style="font-size:44px; margin-top:14px;"></div>
       </div>
@@ -101,18 +105,18 @@
 
     <!-- 左下：獎項設定 -->
     <div class="box">
-      <h2>獎項設定</h2>
-      <input type="text" id="prizeName" placeholder="獎項名稱">
-      <input type="number" id="prizeCount" placeholder="名額數" min="1">
-      <button onclick="addPrize()">新增獎項</button>
-      <button onclick="resetPrizes()" class="reset">重置獎項</button>
+      <h2>籤筒</h2>
+      <input type="text" id="prizeName" placeholder="項目">
+      <input type="number" id="prizeCount" placeholder="名額" min="1">
+      <button onclick="addPrize()">新增項目</button>
+      <button onclick="resetPrizes()" class="reset">重置</button>
       <ul id="prizeList"></ul>
     </div>
   </div>
 
   <!-- 右側：歷史紀錄 -->
   <div class="box" style="flex:1; min-width:300px;">
-    <h2>抽獎歷史紀錄</h2>
+    <h2>結果紀錄</h2>
     <div id="history"></div>
   </div>
 </div>
