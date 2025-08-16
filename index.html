@@ -86,13 +86,14 @@
 </head>
 <body>
 <h1>XG50抽籤筒</h1>
-
+<div class="hint">請先設定好籤筒。設定完成後點選抽籤開始即可依序自動抽籤。</div>
+  
 <div class="main-container">
   <!-- 左側容器 -->
   <div class="left-container">
     <!-- 左上：參加者名單 + 按鈕 -->
     <div class="box">
-      <h2>小夥伴</h2>
+      <h2>參加夥伴</h2>
       <div class="participant-list" id="participantList"></div>
 
       <div style="text-align:center; margin-top:15px;">
@@ -108,7 +109,7 @@
       <h2>籤筒</h2>
       <input type="text" id="prizeName" placeholder="項目">
       <input type="number" id="prizeCount" placeholder="名額" min="1">
-      <button onclick="addPrize()">新增項目</button>
+      <button onclick="addPrize()">項目添加</button>
       <button onclick="resetPrizes()" class="reset">重置</button>
       <ul id="prizeList"></ul>
     </div>
@@ -236,3 +237,4 @@ renderParticipants();
 </script>
 </body>
 </html>
+
