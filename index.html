@@ -212,6 +212,7 @@ function drawWithEffect(prizeName){
     const available = participants.filter(p=>!drawn.includes(p));
     if(available.length===0){ resolve(null); return; }
 
+    /* i>20閃爍次數,閃一次50ms */
     let i=0;
     const participantDivs = document.querySelectorAll(".participant");
     const interval = setInterval(()=>{
@@ -222,12 +223,12 @@ function drawWithEffect(prizeName){
         if(div.innerText===randomName) div.classList.add("active");
       });
       i++;
-      if(i>40){
+      if(i>20){
         clearInterval(interval);
         participantDivs.forEach(div=>div.classList.remove("active"));
         resolve(randomName);
       }
-    },100);
+    },50);
   });
 }
 
@@ -245,6 +246,7 @@ renderParticipants();
 </script>
 </body>
 </html>
+
 
 
 
