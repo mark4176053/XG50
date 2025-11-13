@@ -212,7 +212,7 @@ function drawWithEffect(prizeName){
     const available = participants.filter(p=>!drawn.includes(p));
     if(available.length===0){ resolve(null); return; }
 
-    /* i>20閃爍次數,閃一次50ms */
+    /* i>20閃爍次數,閃一次100ms */
     let i=0;
     const participantDivs = document.querySelectorAll(".participant");
     const interval = setInterval(()=>{
@@ -228,7 +228,7 @@ function drawWithEffect(prizeName){
         participantDivs.forEach(div=>div.classList.remove("active"));
         resolve(randomName);
       }
-    },50);
+    },100);
   });
 }
 
@@ -246,6 +246,7 @@ renderParticipants();
 </script>
 </body>
 </html>
+
 
 
 
