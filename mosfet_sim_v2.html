@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MOSFET 物理特性互動模擬 V2</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            max-width: 1000px;
+        }
+        .controls {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-bottom: 10px;
+            padding: 15px;
+            background: #eef2f5;
+            border-radius: 8px;
+        }
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .slider-group label {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background-color: #fff;
+        }
+        .canvas-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .status {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #e74c3c;
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>MOSFET 互動式物理模擬 (NMOS) V2</h1>
+    
+    <div class="container">
+        <div class="controls">
+            <div class="slider-group">
+                <label for="vgs">Vgs (閘極電壓): <span id="vgs-val">0.0</span> V</label>
+                <input type="range" id="vgs" min="0" max="5" step="0.1" value="0">
+            </div>
+            <div class="slider-group">
+                <label for="vds">Vds (汲極電壓): <span id="vds-val">0.0</span> V</label>
+                <input type="range" id="vds" min="0" max="5" step="0.1" value="0">
+            </div>
+        </div>
+
+        <div class="canvas-container">
+            <h3>MOSFET 橫截面模擬 (動態剖面)</h3>
+            <canvas id="mosfetCanvas" width="600" height="450"></canvas>
+            <div id="region-status" class="status">狀態: Cut-off (截止區)</div>
+        </div>
+
+        <div class="canvas-container">
+            <h3>I-V 曲線 (Id - Vds)</h3>
+            <canvas id="ivCanvas" width="350" height="450"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // MOSFET 參數設定
+        const Vth = 1.5; 
+        const k = 1.2;   
+
+        // UI 元素
+        const vgsSlider = document.getElementById('vgs');
+        const vdsSlider = document.getElementById('vds');
+        const vgsValDisplay = document.getElementById('vgs-val');
+        const vdsValDisplay = document.getElementById('vds-val');
+        const statusDisplay = document.getElementById('region-status');
+        
+        const mosCtx = document.getElementById('mosfetCanvas').getContext('2d');
+        const ivCtx = document.getElementById('ivCanvas').getContext('2d');
+
+        let electrons = [];
+        
+        // 顏色配置
+        const colorSubstrate = "#fce4ec";
+        const colorDepletion = "#9e9e9e"; // 更明顯的灰色
+        const colorNPlus = "#154360";     // N+ 深藍色
+        const colorChannel = "#85c1e9";   // Channel 淺藍色
+        const colorOxide = "#b2babb";
+        const colorGate = "#34495e";
+        const colorElectron = "#f1c40f";  // 電子用黃色以增加在藍色背景的對比
+
+        // 尺寸常數 (加高版)
+        const subX = 50, subY = 200, subW = 500, subH = 200;
+        const sourceW = 90, sourceH = 100;
+        const drainW = 90, drainH = 100;
+        const gateX = 140, gateW = 320;
+        const startX = subX + sourceW; 
+        const endX = subX + subW - drainW; 
+        
+        function getMOSFETState() {
+            let vgs = parseFloat(vgsSlider.value);
+            let vds = parseFloat(vdsSlider.value);
+            let id = 0;
+            let region = "";
+
+            if (vgs < Vth) {
+                region = "Cut-off (截止區)";
+                id = 0;
+            } else if (vds < (vgs - Vth)) {
+                region = "Linear / Triode (線性區)";
+                id = k * ((vgs - Vth) * vds - 0.5 * vds * vds);
+            } else {
+                region = "Saturation (飽和區 / Pinch-off 夾止)";
+                id = 0.5 * k * Math.pow(vgs - Vth, 2);
+            }
+            id = Math.max(0, id); 
+            return { vgs, vds, id, region };
+        }
+
+        function updateUI() {
+            const state = getMOSFETState();
+            vgsValDisplay.innerText = state.vgs.toFixed(1);
+            vdsValDisplay.innerText = state.vds.toFixed(1);
+            statusDisplay.innerText = `狀態: ${state.region} | Id = ${state.id.toFixed(2)} mA`;
+        }
+
+        function drawMOSFET(state) {
+            mosCtx.clearRect(0, 0, 600, 450);
+
+            // 1. P-Substrate
+            mosCtx.fillStyle = colorSubstrate;
+            mosCtx.fillRect(subX, subY, subW, subH);
+            mosCtx.fillStyle = "#333";
+            mosCtx.font = "16px Arial";
+            mosCtx.fillText("P-Substrate", subX + 210, subY + 160);
+
+            // 計算 Channel 夾止位置
+            let pinchX = endX;
+            let chanLeftH = 0;
+            let chanRightH = 0;
+
+            if (state.vgs > Vth) {
+                chanLeftH = (state.vgs - Vth) * 8; // 放寬高度比例
+                if (state.vds < (state.vgs - Vth)) {
+                    chanRightH = (state.vgs - Vth - state.vds) * 8;
+                    pinchX = endX;
+                } else {
+                    chanRightH = 0;
+                    let overDrive = state.vds - (state.vgs - Vth);
+                    let deltaL = overDrive * 25; // 通道退後距離隨 Vds 增加
+                    pinchX = Math.max(startX + 20, endX - deltaL); 
+                }
+            }
+
+            // 2. 空乏區 (更明顯的灰色)
+            let depSource = 15; 
+            // Drain 空乏區會隨 Vds 變大，並且當通道退後時，空乏區會填補該空間
+            let depDrain = 15 + state.vds * 18; 
+            let depGate = state.vgs > Vth ? 30 : state.vgs * (30/Vth); 
+
+            mosCtx.fillStyle = colorDepletion;
+            mosCtx.beginPath();
+            // Source 空乏區
+            mosCtx.rect(subX - 5, subY - 5, sourceW + depSource + 5, sourceH + depSource);
+            // Drain 空乏區 (向左延伸更深以對應夾止)
+            mosCtx.rect(subX + subW - drainW - depDrain, subY - 5, drainW + depDrain + 5, drainH + depDrain);
+            // Gate 下方空乏區
+            mosCtx.rect(gateX, subY, gateW, depGate);
+            mosCtx.fill();
+
+            // 3. Source 與 Drain (N+ 區，深藍色)
+            mosCtx.fillStyle = colorNPlus;
+            mosCtx.fillRect(subX, subY, sourceW, sourceH);
+            mosCtx.fillRect(subX + subW - drainW, subY, drainW, drainH);
+            mosCtx.fillStyle = "#fff";
+            mosCtx.font = "14px Arial";
+            mosCtx.fillText("N+ (Source)", subX + 5, subY + 50);
+            mosCtx.fillText("N+ (Drain)", subX + subW - drainW + 10, subY + 50);
+
+            // 4. Channel (反轉層，淡藍色)
+            if (state.vgs > Vth) {
+                mosCtx.fillStyle = colorChannel;
+                mosCtx.beginPath();
+                mosCtx.moveTo(startX, subY); // 左上
+                mosCtx.lineTo(pinchX, subY); // 右上 (夾止點)
+                mosCtx.lineTo(pinchX, subY + chanRightH); // 右下
+                mosCtx.lineTo(startX, subY + chanLeftH); // 左下
+                mosCtx.closePath();
+                mosCtx.fill();
+                
+                // 繪製退後虛線標示 (幫助看清退後範圍)
+                if (pinchX < endX) {
+                    mosCtx.strokeStyle = "rgba(255, 0, 0, 0.5)";
+                    mosCtx.setLineDash([5, 5]);
+                    mosCtx.beginPath();
+                    mosCtx.moveTo(pinchX, subY);
+                    mosCtx.lineTo(pinchX, subY + 40);
+                    mosCtx.stroke();
+                    mosCtx.setLineDash([]);
+                }
+            }
+
+            // 5. Oxide (氧化層) 與 Gate (金屬閘極)
+            mosCtx.fillStyle = colorOxide; 
+            mosCtx.fillRect(gateX, subY - 15, gateW, 15);
+            mosCtx.fillStyle = colorGate; 
+            mosCtx.fillRect(gateX, subY - 45, gateW, 30);
+            mosCtx.fillStyle = "#fff";
+            mosCtx.fillText("Gate", gateX + 140, subY - 25);
+
+            // 接腳與標示
+            mosCtx.strokeStyle = "#000";
+            mosCtx.lineWidth = 2;
+            mosCtx.beginPath();
+            mosCtx.moveTo(subX + 45, subY); mosCtx.lineTo(subX + 45, subY - 60); 
+            mosCtx.moveTo(subX + subW - 45, subY); mosCtx.lineTo(subX + subW - 45, subY - 60); 
+            mosCtx.moveTo(gateX + 160, subY - 45); mosCtx.lineTo(gateX + 160, subY - 80); 
+            mosCtx.stroke();
+            
+            drawElectrons(state, startX, endX, pinchX, subY, chanLeftH, chanRightH);
+        }
+
+        function drawElectrons(state, startX, endX, pinchX, startY, chanLeftH, chanRightH) {
+            // 生成電子
+            if (state.vgs > Vth && Math.random() < 0.2 + state.id * 0.1) {
+                electrons.push({
+                    x: startX,
+                    y: startY + 2 + Math.random() * (chanLeftH - 4),
+                    speed: state.id === 0 ? 0 : 0.4 + state.id * 0.25 
+                });
+            }
+
+            mosCtx.fillStyle = colorElectron;
+            for (let i = electrons.length - 1; i >= 0; i--) {
+                let e = electrons[i];
+                
+                mosCtx.beginPath();
+                mosCtx.arc(e.x, e.y, 3, 0, Math.PI * 2);
+                mosCtx.fill();
+
+                // 夾止區加速與軌跡
+                if (e.x >= pinchX && pinchX < endX) {
+                    e.x += e.speed * 2.5; // 在空乏區被電場強力加速
+                    // 稍微向 Drain 中間擴散
+                    let targetY = startY + sourceH / 2;
+                    e.y += (targetY - e.y) * 0.08;
+                } else {
+                    e.x += e.speed;
+                    // 保持在通道內
+                    let progress = (e.x - startX) / (pinchX - startX);
+                    if (progress > 1) progress = 1;
+                    if (isNaN(progress)) progress = 0;
+                    
+                    let currentThickness = chanLeftH - progress * (chanLeftH - chanRightH);
+                    if (e.y > startY + currentThickness) {
+                        e.y = startY + currentThickness - 2;
+                    }
+                }
+
+                if (e.x > endX + 25) {
+                    electrons.splice(i, 1);
+                }
+            }
+            
+            if (state.vgs < Vth) electrons = [];
+        }
+
+        function drawIVCurve(currentState) {
+            ivCtx.clearRect(0, 0, 350, 450);
+            
+            const pad = 40;
+            const w = 350 - pad * 2;
+            const h = 450 - pad * 2;
+
+            ivCtx.strokeStyle = "#333";
+            ivCtx.lineWidth = 1;
+            ivCtx.beginPath();
+            ivCtx.moveTo(pad, pad - 10);
+            ivCtx.lineTo(pad, pad + h);
+            ivCtx.lineTo(pad + w + 10, pad + h);
+            ivCtx.stroke();
+            
+            ivCtx.fillStyle = "#000";
+            ivCtx.font = "12px Arial";
+            ivCtx.fillText("Vds (V)", pad + w - 10, pad + h + 20);
+            ivCtx.fillText("Id (mA)", pad - 35, pad - 10);
+
+            const vgsList = [2, 3, 4, 5];
+            ivCtx.lineWidth = 1.5;
+            
+            const scaleX = w / 5;
+            const maxId = 0.5 * k * Math.pow(5 - Vth, 2); 
+            const scaleY = h / (maxId * 1.1);
+
+            vgsList.forEach(vgsTest => {
+                if(vgsTest < Vth) return;
+                
+                ivCtx.beginPath();
+                ivCtx.strokeStyle = vgsTest === currentState.vgs ? "#3498db" : "#ccc"; 
+                
+                for (let vdsTest = 0; vdsTest <= 5; vdsTest += 0.1) {
+                    let idTest = 0;
+                    if (vdsTest < (vgsTest - Vth)) {
+                        idTest = k * ((vgsTest - Vth) * vdsTest - 0.5 * vdsTest * vdsTest);
+                    } else {
+                        idTest = 0.5 * k * Math.pow(vgsTest - Vth, 2);
+                    }
+                    
+                    let px = pad + vdsTest * scaleX;
+                    let py = pad + h - idTest * scaleY;
+                    
+                    if (vdsTest === 0) ivCtx.moveTo(px, py);
+                    else ivCtx.lineTo(px, py);
+                }
+                ivCtx.stroke();
+                
+                let textY = pad + h - (0.5 * k * Math.pow(vgsTest - Vth, 2)) * scaleY;
+                ivCtx.fillStyle = vgsTest === currentState.vgs ? "#3498db" : "#999";
+                ivCtx.fillText(`Vgs=${vgsTest}`, pad + w - 30, textY - 5);
+            });
+
+            let pointX = pad + currentState.vds * scaleX;
+            let pointY = pad + h - currentState.id * scaleY;
+
+            ivCtx.fillStyle = "red";
+            ivCtx.beginPath();
+            ivCtx.arc(pointX, pointY, 5, 0, Math.PI * 2);
+            ivCtx.fill();
+            
+            ivCtx.strokeStyle = "rgba(255,0,0,0.3)";
+            ivCtx.setLineDash([5, 5]);
+            ivCtx.beginPath();
+            ivCtx.moveTo(pointX, pad + h);
+            ivCtx.lineTo(pointX, pointY);
+            ivCtx.lineTo(pad, pointY);
+            ivCtx.stroke();
+            ivCtx.setLineDash([]); 
+            
+            ivCtx.fillStyle = "red";
+            ivCtx.fillText("Current", pointX + 8, pointY - 8);
+        }
+
+        function animate() {
+            updateUI();
+            const state = getMOSFETState();
+            drawMOSFET(state);
+            drawIVCurve(state);
+            requestAnimationFrame(animate);
+        }
+
+        vgsSlider.addEventListener('input', updateUI);
+        vdsSlider.addEventListener('input', updateUI);
+        animate();
+
+    </script>
+</body>
+</html>
