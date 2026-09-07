@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flash Memory物理特性</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            max-width: 1100px;
+        }
+        .controls {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 10px;
+            padding: 15px;
+            background: #eef2f5;
+            border-radius: 8px;
+            flex-wrap: wrap;
+        }
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 200px;
+        }
+        .slider-group label {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background-color: #fff;
+        }
+        .canvas-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .status {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #e74c3c;
+            font-size: 16px;
+        }
+        .vth-info {
+            color: #2980b9;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Flash Memory物理特性模擬</h1>
+    <div class="subtitle">owner:Tzuyi</div>
+    
+    <div class="container">
+        <div class="controls">
+            <div class="slider-group">
+                <label for="vcg">Vcg (控制閘極電壓): <span id="vcg-val">0.0</span> V</label>
+                <input type="range" id="vcg" min="0" max="5" step="0.1" value="0">
+            </div>
+            <div class="slider-group">
+                <label for="vds">Vds (汲極電壓): <span id="vds-val">0.0</span> V</label>
+                <input type="range" id="vds" min="0" max="5" step="0.1" value="0">
+            </div>
+            <div class="slider-group" style="background: #ffeaa7; padding: 10px; border-radius: 8px;">
+                <label for="qfg">Qfg (浮動閘極電荷狀態): <span id="qfg-val">0.0</span></label>
+                <div style="font-size:12px; color:#555; margin-bottom:5px;">負值=存入電子(Program), 正值=電洞(Erase)</div>
+                <input type="range" id="qfg" min="-2.5" max="1.5" step="0.1" value="0">
+            </div>
+        </div>
+
+        <div class="canvas-container">
+            <h3>Flash Cell 橫截面模擬</h3>
+            <canvas id="mosfetCanvas" width="600" height="480"></canvas>
+            <div id="region-status" class="status">狀態: Cut-off (截止區)</div>
+            <div id="vth-status" class="vth-info">基礎 Vth = 1.5V | 等效 Vth = 1.5V</div>
+        </div>
+
+        <div class="canvas-container">
+            <h3>I-V 曲線 (Id - Vds 隨 Vth 變化)</h3>
+            <canvas id="ivCanvas" width="350" height="480"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // 基本參數設定
+        const Vth0 = 1.5; // 基礎臨界電壓 (當 FG 沒有淨電荷時)
+        const k = 1.2;    // 增益常數
+
+        // UI 元素
+        const vcgSlider = document.getElementById('vcg');
+        const vdsSlider = document.getElementById('vds');
+        const qfgSlider = document.getElementById('qfg');
+        const vcgValDisplay = document.getElementById('vcg-val');
+        const vdsValDisplay = document.getElementById('vds-val');
+        const qfgValDisplay = document.getElementById('qfg-val');
+        const statusDisplay = document.getElementById('region-status');
+        const vthDisplay = document.getElementById('vth-status');
+        
+        const mosCtx = document.getElementById('mosfetCanvas').getContext('2d');
+        const ivCtx = document.getElementById('ivCanvas').getContext('2d');
+
+        let electrons = [];
+        
+        // 顏色配置
+        const colorSubstrate = "#fce4ec";
+        const colorDepletion = "#9e9e9e"; 
+        const colorNPlus = "#154360";     
+        const colorChannel = "#85c1e9";   
+        const colorTunnelOxide = "#d5dbdb"; // 隧道氧化層 (較薄)
+        const colorBlockOxide = "#b2babb";  // 阻絕氧化層 (較厚)
+        const colorControlGate = "#34495e"; // 控制閘極
+        const colorFloatingGate = "#f39c12"; // 浮動閘極 (橘黃色突顯)
+        const colorElectron = "#f1c40f";  
+        const colorFGChargeNeg = "#e74c3c"; // 浮動閘極電子標示顏色
+        const colorFGChargePos = "#2980b9"; // 浮動閘極電洞標示顏色
+
+        // 尺寸常數 (增加高度容納多層 Gate)
+        const subX = 50, subY = 240, subW = 500, subH = 200;
+        const sourceW = 90, sourceH = 100;
+        const drainW = 90, drainH = 100;
+        const gateX = 140, gateW = 320;
+        const startX = subX + sourceW; 
+        const endX = subX + subW - drainW; 
+        
+        function getMOSFETState() {
+            let vcg = parseFloat(vcgSlider.value);
+            let vds = parseFloat(vdsSlider.value);
+            let qfg = parseFloat(qfgSlider.value); 
+            
+            // 計算等效 Vth：浮動閘極帶負電 (qfg < 0) 會讓 Vth 升高，帶正電會讓 Vth 降低
+            let vth_eff = Vth0 - qfg; 
+
+            let id = 0;
+            let region = "";
+
+            if (vcg < vth_eff) {
+                region = "Cut-off (截止區)";
+                id = 0;
+            } else if (vds < (vcg - vth_eff)) {
+                region = "Linear / Triode (線性區)";
+                id = k * ((vcg - vth_eff) * vds - 0.5 * vds * vds);
+            } else {
+                region = "Saturation (飽和區 / Pinch-off)";
+                id = 0.5 * k * Math.pow(vcg - vth_eff, 2);
+            }
+            id = Math.max(0, id); 
+            return { vcg, vds, qfg, vth_eff, id, region };
+        }
+
+        function updateUI() {
+            const state = getMOSFETState();
+            vcgValDisplay.innerText = state.vcg.toFixed(1);
+            vdsValDisplay.innerText = state.vds.toFixed(1);
+            qfgValDisplay.innerText = state.qfg.toFixed(1);
+            
+            statusDisplay.innerText = `狀態: ${state.region} | Id = ${state.id.toFixed(2)} mA`;
+            vthDisplay.innerText = `基礎 Vth = ${Vth0.toFixed(1)}V | 等效 Vth = ${state.vth_eff.toFixed(2)}V`;
+        }
+
+        function drawMOSFET(state) {
+            mosCtx.clearRect(0, 0, 600, 480);
+
+            // 1. P-Substrate
+            mosCtx.fillStyle = colorSubstrate;
+            mosCtx.fillRect(subX, subY, subW, subH);
+            mosCtx.fillStyle = "#333";
+            mosCtx.font = "16px Arial";
+            mosCtx.fillText("P-Substrate", subX + 210, subY + 160);
+
+            // 計算 Channel 夾止位置 (依賴 vth_eff)
+            let pinchX = endX;
+            let chanLeftH = 0;
+            let chanRightH = 0;
+
+            if (state.vcg > state.vth_eff) {
+                chanLeftH = (state.vcg - state.vth_eff) * 8; 
+                if (state.vds < (state.vcg - state.vth_eff)) {
+                    chanRightH = (state.vcg - state.vth_eff - state.vds) * 8;
+                    pinchX = endX;
+                } else {
+                    chanRightH = 0;
+                    let overDrive = state.vds - (state.vcg - state.vth_eff);
+                    let deltaL = overDrive * 25; 
+                    pinchX = Math.max(startX + 20, endX - deltaL); 
+                }
+            }
+
+            // 2. 空乏區
+            let depSource = 15; 
+            let depDrain = 15 + state.vds * 18; 
+            let depGate = state.vcg > state.vth_eff ? 30 : Math.max(0, state.vcg * (30/state.vth_eff)); 
+
+            mosCtx.fillStyle = colorDepletion;
+            mosCtx.beginPath();
+            mosCtx.rect(subX - 5, subY - 5, sourceW + depSource + 5, sourceH + depSource);
+            mosCtx.rect(subX + subW - drainW - depDrain, subY - 5, drainW + depDrain + 5, drainH + depDrain);
+            mosCtx.rect(gateX, subY, gateW, depGate);
+            mosCtx.fill();
+
+            // 3. Source 與 Drain
+            mosCtx.fillStyle = colorNPlus;
+            mosCtx.fillRect(subX, subY, sourceW, sourceH);
+            mosCtx.fillRect(subX + subW - drainW, subY, drainW, drainH);
+            mosCtx.fillStyle = "#fff";
+            mosCtx.font = "14px Arial";
+            mosCtx.fillText("N+ (Source)", subX + 5, subY + 50);
+            mosCtx.fillText("N+ (Drain)", subX + subW - drainW + 10, subY + 50);
+
+            // 4. Channel
+            if (state.vcg > state.vth_eff) {
+                mosCtx.fillStyle = colorChannel;
+                mosCtx.beginPath();
+                mosCtx.moveTo(startX, subY); 
+                mosCtx.lineTo(pinchX, subY); 
+                mosCtx.lineTo(pinchX, subY + chanRightH); 
+                mosCtx.lineTo(startX, subY + chanLeftH); 
+                mosCtx.closePath();
+                mosCtx.fill();
+                
+                if (pinchX < endX) {
+                    mosCtx.strokeStyle = "rgba(255, 0, 0, 0.5)";
+                    mosCtx.setLineDash([5, 5]);
+                    mosCtx.beginPath();
+                    mosCtx.moveTo(pinchX, subY);
+                    mosCtx.lineTo(pinchX, subY + 40);
+                    mosCtx.stroke();
+                    mosCtx.setLineDash([]);
+                }
+            }
+
+            // 5. Flash Gate 結構 (由下到上疊加)
+            // Tunnel Oxide
+            mosCtx.fillStyle = colorTunnelOxide; 
+            mosCtx.fillRect(gateX, subY - 15, gateW, 15);
+            
+            // Floating Gate (FG)
+            mosCtx.fillStyle = colorFloatingGate; 
+            mosCtx.fillRect(gateX, subY - 35, gateW, 20);
+            mosCtx.fillStyle = "#000";
+            mosCtx.font = "14px Arial";
+            mosCtx.fillText("Floating Gate (FG)", gateX + 90, subY - 20);
+
+            // 繪製 FG 內的電荷狀態 (視覺化 Qfg)
+            drawFGCharges(state.qfg);
+
+            // Block Oxide
+            mosCtx.fillStyle = colorBlockOxide; 
+            mosCtx.fillRect(gateX, subY - 55, gateW, 20);
+
+            // Control Gate (CG)
+            mosCtx.fillStyle = colorControlGate; 
+            mosCtx.fillRect(gateX, subY - 95, gateW, 40);
+            mosCtx.fillStyle = "#fff";
+            mosCtx.fillText("Control Gate (CG)", gateX + 95, subY - 70);
+
+            // 接腳與標示
+            mosCtx.strokeStyle = "#000";
+            mosCtx.lineWidth = 2;
+            mosCtx.beginPath();
+            mosCtx.moveTo(subX + 45, subY); mosCtx.lineTo(subX + 45, subY - 80); // Source pin
+            mosCtx.moveTo(subX + subW - 45, subY); mosCtx.lineTo(subX + subW - 45, subY - 80); // Drain pin
+            mosCtx.moveTo(gateX + 160, subY - 95); mosCtx.lineTo(gateX + 160, subY - 130); // Control Gate pin
+            mosCtx.stroke();
+            
+            drawElectrons(state, startX, endX, pinchX, subY, chanLeftH, chanRightH);
+        }
+
+        // 視覺化浮動閘極內的電荷
+        function drawFGCharges(qfg) {
+            if (qfg === 0) return;
+            
+            mosCtx.font = "20px Arial";
+            mosCtx.fontWeight = "bold";
+            let symbol = qfg < 0 ? "-" : "+";
+            mosCtx.fillStyle = qfg < 0 ? colorFGChargeNeg : colorFGChargePos;
+            
+            // 決定畫幾個符號來代表強度
+            let count = Math.ceil(Math.abs(qfg) * 3); 
+            let step = gateW / (count + 1);
+            
+            for(let i = 1; i <= count; i++) {
+                mosCtx.fillText(symbol, gateX + (step * i) - 5, subY - 20);
+            }
+        }
+
+        function drawElectrons(state, startX, endX, pinchX, startY, chanLeftH, chanRightH) {
+            if (state.vcg > state.vth_eff && Math.random() < 0.2 + state.id * 0.1) {
+                electrons.push({
+                    x: startX,
+                    y: startY + 2 + Math.random() * (chanLeftH - 4),
+                    speed: state.id === 0 ? 0 : 0.4 + state.id * 0.25 
+                });
+            }
+
+            mosCtx.fillStyle = colorElectron;
+            for (let i = electrons.length - 1; i >= 0; i--) {
+                let e = electrons[i];
+                
+                mosCtx.beginPath();
+                mosCtx.arc(e.x, e.y, 3, 0, Math.PI * 2);
+                mosCtx.fill();
+
+                if (e.x >= pinchX && pinchX < endX) {
+                    e.x += e.speed * 2.5; 
+                    let targetY = startY + sourceH / 2;
+                    e.y += (targetY - e.y) * 0.08;
+                } else {
+                    e.x += e.speed;
+                    let progress = (e.x - startX) / (pinchX - startX);
+                    if (progress > 1) progress = 1;
+                    if (isNaN(progress)) progress = 0;
+                    
+                    let currentThickness = chanLeftH - progress * (chanLeftH - chanRightH);
+                    if (e.y > startY + currentThickness) {
+                        e.y = startY + currentThickness - 2;
+                    }
+                }
+
+                if (e.x > endX + 25) {
+                    electrons.splice(i, 1);
+                }
+            }
+            
+            if (state.vcg < state.vth_eff) electrons = [];
+        }
+
+        function drawIVCurve(currentState) {
+            ivCtx.clearRect(0, 0, 350, 480);
+            
+            const pad = 40;
+            const w = 350 - pad * 2;
+            const h = 480 - pad * 2;
+
+            ivCtx.strokeStyle = "#333";
+            ivCtx.lineWidth = 1;
+            ivCtx.beginPath();
+            ivCtx.moveTo(pad, pad - 10);
+            ivCtx.lineTo(pad, pad + h);
+            ivCtx.lineTo(pad + w + 10, pad + h);
+            ivCtx.stroke();
+            
+            ivCtx.fillStyle = "#000";
+            ivCtx.font = "12px Arial";
+            ivCtx.fillText("Vds (V)", pad + w - 10, pad + h + 20);
+            ivCtx.fillText("Id (mA)", pad - 35, pad - 10);
+
+            // 在 Flash 模型中，我們畫出不同 Vcg 的曲線，並且這些曲線會因為 qfg 發生整體偏移
+            const vcgList = [2, 3, 4, 5];
+            ivCtx.lineWidth = 1.5;
+            
+            const scaleX = w / 5;
+            // 最大電流基準 (以最容易導通的極端狀態計算 Y 軸比例)
+            const maxId = 0.5 * k * Math.pow(5 - (Vth0 - 1.5), 2); 
+            const scaleY = h / (maxId * 1.1);
+
+            vcgList.forEach(vcgTest => {
+                if(vcgTest < currentState.vth_eff) return; // 如果該 Vcg 不足以克服當前的等效 Vth，就不畫線
+                
+                ivCtx.beginPath();
+                ivCtx.strokeStyle = vcgTest === currentState.vcg ? "#3498db" : "#ccc"; 
+                
+                for (let vdsTest = 0; vdsTest <= 5; vdsTest += 0.1) {
+                    let idTest = 0;
+                    if (vdsTest < (vcgTest - currentState.vth_eff)) {
+                        idTest = k * ((vcgTest - currentState.vth_eff) * vdsTest - 0.5 * vdsTest * vdsTest);
+                    } else {
+                        idTest = 0.5 * k * Math.pow(vcgTest - currentState.vth_eff, 2);
+                    }
+                    
+                    let px = pad + vdsTest * scaleX;
+                    let py = pad + h - idTest * scaleY;
+                    
+                    if (vdsTest === 0) ivCtx.moveTo(px, py);
+                    else ivCtx.lineTo(px, py);
+                }
+                ivCtx.stroke();
+                
+                let textY = pad + h - (0.5 * k * Math.pow(vcgTest - currentState.vth_eff, 2)) * scaleY;
+                ivCtx.fillStyle = vcgTest === currentState.vcg ? "#3498db" : "#999";
+                ivCtx.fillText(`Vcg=${vcgTest}`, pad + w - 35, textY - 5);
+            });
+
+            // 標記目前紅點
+            let pointX = pad + currentState.vds * scaleX;
+            let pointY = pad + h - currentState.id * scaleY;
+
+            ivCtx.fillStyle = "red";
+            ivCtx.beginPath();
+            ivCtx.arc(pointX, pointY, 5, 0, Math.PI * 2);
+            ivCtx.fill();
+            
+            ivCtx.strokeStyle = "rgba(255,0,0,0.3)";
+            ivCtx.setLineDash([5, 5]);
+            ivCtx.beginPath();
+            ivCtx.moveTo(pointX, pad + h);
+            ivCtx.lineTo(pointX, pointY);
+            ivCtx.lineTo(pad, pointY);
+            ivCtx.stroke();
+            ivCtx.setLineDash([]); 
+            
+            ivCtx.fillStyle = "red";
+            ivCtx.fillText("Current", pointX + 8, pointY - 8);
+        }
+
+        function animate() {
+            updateUI();
+            const state = getMOSFETState();
+            drawMOSFET(state);
+            drawIVCurve(state);
+            requestAnimationFrame(animate);
+        }
+
+        vcgSlider.addEventListener('input', updateUI);
+        vdsSlider.addEventListener('input', updateUI);
+        qfgSlider.addEventListener('input', updateUI);
+        animate();
+
+    </script>
+</body>
+</html>
