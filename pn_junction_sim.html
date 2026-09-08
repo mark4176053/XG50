@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PN Junction 特性模擬</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            max-width: 1200px;
+        }
+        .controls {
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            margin-bottom: 10px;
+            padding: 15px;
+            background: #eef2f5;
+            border-radius: 8px;
+            flex-wrap: wrap;
+        }
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 220px;
+        }
+        .slider-group label {
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        .canvas-column {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            background-color: #fff;
+            box-shadow: inset 0 0 5px rgba(0,0,0,0.05);
+        }
+        .status {
+            font-weight: bold;
+            font-size: 16px;
+            margin-top: -5px;
+            padding: 5px 15px;
+            border-radius: 5px;
+        }
+        .status-normal { color: #2980b9; background: #eaf2f8; }
+        .status-breakdown { color: #fff; background: #e74c3c; animation: flash 1s infinite alternate; }
+        @keyframes flash { from { opacity: 1; } to { opacity: 0.8; } }
+        .formula-box {
+            font-size: 12px;
+            color: #555;
+            background: #fff3e0;
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px dashed #e67e22;
+            margin-top: 10px;
+            width: 100%;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>PN Junction 特性模擬</h1>
+    <h2>Owner:Tzuyi</h2>    
+
+    <div class="container">
+        <!-- 控制面板 -->
+        <div class="controls">
+            <div class="slider-group" style="background: #fcf3cf; padding: 10px; border-radius: 8px;">
+                <label for="bias">外加偏壓 (V_bias): <span id="bias-val">0.00</span> V</label>
+                <div style="font-size:12px; color:#555; margin-bottom:5px;">範圍: -10V(逆偏) ~ +0.9V(順偏)</div>
+                <input type="range" id="bias" min="-10" max="0.9" step="0.1" value="0">
+            </div>
+            <div class="slider-group">
+                <label for="dopingP">P-type 摻雜濃度 (Na): <span id="dopingP-val">5</span></label>
+                <div style="font-size:11px; color:#777;">(相對值 1~10，Step=1)</div>
+                <input type="range" id="dopingP" min="1" max="10" step="1" value="5">
+            </div>
+            <div class="slider-group">
+                <label for="dopingN">N-type 摻雜濃度 (Nd): <span id="dopingN-val">5</span></label>
+                <div style="font-size:11px; color:#777;">(相對值 1~10，Step=1)</div>
+                <input type="range" id="dopingN" min="1" max="10" step="1" value="5">
+            </div>
+            
+        <!-- 視覺化圖表區 -->
+        <div class="canvas-column">
+            <h3>PN 接面橫截面模擬</h3>
+            <canvas id="crossCanvas" width="550" height="150"></canvas>
+            
+            <h3>能帶圖 (Energy Band Diagram)</h3>
+            <canvas id="bandCanvas" width="550" height="320"></canvas>
+            <div id="status-display" class="status status-normal">狀態: 平衡狀態 | Id = 0.00 mA</div>
+        </div>
+
+        <div class="canvas-column">
+            <h3>I-V 曲線與崩潰特性 (動態計算)</h3>
+            <canvas id="ivCanvas" width="350" height="505"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const biasSlider = document.getElementById('bias');
+        const dopingPSlider = document.getElementById('dopingP');
+        const dopingNSlider = document.getElementById('dopingN');
+        const biasValDisplay = document.getElementById('bias-val');
+        const dopingPValDisplay = document.getElementById('dopingP-val');
+        const dopingNValDisplay = document.getElementById('dopingN-val');
+        const statusDisplay = document.getElementById('status-display');
+        
+        const crossCtx = document.getElementById('crossCanvas').getContext('2d');
+        const bandCtx = document.getElementById('bandCanvas').getContext('2d');
+        const ivCtx = document.getElementById('ivCanvas').getContext('2d');
+
+        const colorPType = "#fce4ec";
+        const colorNType = "#e1f5fe";
+        const colorDepletion = "#e0e0e0";
+        const colorEc = "#c0392b"; 
+        const colorEv = "#2980b9"; 
+        const colorEf = "#27ae60"; 
+        const colorHole = "#ffffff"; 
+
+        let particles = [];
+
+        function cosInterpolate(y1, y2, mu) {
+            let mu2 = (1 - Math.cos(mu * Math.PI)) / 2;
+            return (y1 * (1 - mu2) + y2 * mu2);
+        }
+
+        function getState() {
+            let v_bias = parseFloat(biasSlider.value);
+            let na = parseInt(dopingPSlider.value);
+            let nd = parseInt(dopingNSlider.value);
+
+            // 1. 動態崩潰電壓 V_br (摻雜濃度越高，|V_br| 越小)
+            // 範圍約為 -9.5V (Na=1, Nd=1) 到 -2.3V (Na=10, Nd=10)
+            let v_br = -(1.5 + 8.0 / Math.sqrt(na * nd));
+
+            // 2. 內建電位 V_bi (摻雜濃度越高，V_bi 越大)
+            let v_bi = 0.5 + 0.03 * (na + nd);
+            if (v_bias >= v_bi - 0.05) v_bias = v_bi - 0.05; 
+
+            // 空乏區寬度
+            let barrier = v_bi - v_bias;
+            let w_base = 50; 
+            let w = w_base * Math.sqrt(barrier * (1/na + 1/nd));
+            if (w > 200) w = 200; 
+
+            let center = 275; 
+            let xp = center - w * (nd / (na + nd));
+            let xn = center + w * (na / (na + nd));
+
+            let eg = 60; 
+            let ef_n = 230; 
+            let ec_n = ef_n - (10 + nd * 2.5); 
+            let ev_n = ec_n + eg;
+
+            let ef_p = ef_n + (v_bias * 15); 
+            let ev_p = ef_p + (10 + na * 2.5);
+            let ec_p = ev_p - eg;
+
+            // 3. 動態逆向飽和電流 Is (濃度越高，Is 越小，順向曲線向右偏移)
+            let is = 0.002 * (1/na + 1/nd); 
+            let vt = 0.065; 
+            
+            let current = is * (Math.exp(v_bias / vt) - 1);
+            
+            // 崩潰區電流飆升計算
+            if (v_bias < v_br) {
+                current -= 2.0 * Math.pow(Math.abs(v_bias - v_br), 2);
+            }
+
+            let mode = "";
+            if (v_bias < v_br) mode = "崩潰區 (Breakdown Region)!";
+            else if (v_bias > 0.02) mode = "順向偏壓 (Forward Bias)";
+            else if (v_bias < -0.02) mode = "逆向偏壓 (Reverse Bias)";
+            else mode = "平衡狀態 (Equilibrium)";
+
+            return { v_bias, v_br, v_bi, na, nd, xp, xn, center, barrier, ec_n, ev_n, ef_n, ec_p, ev_p, ef_p, is, vt, current, mode };
+        }
+
+        function updateUI() {
+            const state = getState();
+            biasValDisplay.innerText = parseFloat(biasSlider.value).toFixed(2);
+            dopingPValDisplay.innerText = state.na;
+            dopingNValDisplay.innerText = state.nd;
+            statusDisplay.innerText = `狀態: ${state.mode} | Id = ${state.current.toFixed(2)} mA`;
+            
+            if (state.v_bias < state.v_br) {
+                statusDisplay.className = "status status-breakdown";
+            } else {
+                statusDisplay.className = "status status-normal";
+            }
+        }
+
+        function drawCrossSection(state) {
+            crossCtx.clearRect(0, 0, 550, 150);
+            crossCtx.fillStyle = colorPType;
+            crossCtx.fillRect(0, 20, state.xp, 110);
+            crossCtx.fillStyle = colorNType;
+            crossCtx.fillRect(state.xn, 20, 550 - state.xn, 110);
+            
+            if (state.v_bias < state.v_br) crossCtx.fillStyle = "rgba(231, 76, 60, 0.3)";
+            else crossCtx.fillStyle = colorDepletion;
+            crossCtx.fillRect(state.xp, 20, state.xn - state.xp, 110);
+
+            crossCtx.fillStyle = "#333";
+            crossCtx.font = "18px Arial";
+            crossCtx.fillText("P-Type (Na)", 50, 85);
+            crossCtx.fillText("N-Type (Nd)", 400, 85);
+            
+            crossCtx.font = "12px Arial";
+            crossCtx.fillStyle = "#555";
+            crossCtx.fillText(state.v_bias < state.v_br ? "!! BREAKDOWN !!" : "Depletion Region", state.center - 45, 120);
+
+            crossCtx.lineWidth = 4;
+            crossCtx.strokeStyle = "#555";
+            crossCtx.beginPath();
+            crossCtx.moveTo(0, 75); crossCtx.lineTo(20, 75); 
+            crossCtx.moveTo(530, 75); crossCtx.lineTo(550, 75); 
+            crossCtx.stroke();
+            
+            drawParticles(crossCtx, state, 'cross');
+        }
+
+        function drawBands(state) {
+            bandCtx.clearRect(0, 0, 550, 320);
+            bandCtx.fillStyle = colorPType;
+            bandCtx.fillRect(0, 0, state.xp, 320);
+            bandCtx.fillStyle = colorNType;
+            bandCtx.fillRect(state.xn, 0, 550 - state.xn, 320);
+            
+            if (state.v_bias < state.v_br) bandCtx.fillStyle = "rgba(231, 76, 60, 0.1)";
+            else bandCtx.fillStyle = colorDepletion;
+            bandCtx.fillRect(state.xp, 0, state.xn - state.xp, 320);
+
+            bandCtx.lineWidth = 3;
+
+            bandCtx.strokeStyle = colorEc;
+            bandCtx.beginPath();
+            for (let x = 0; x <= 550; x++) {
+                let y = (x < state.xp) ? state.ec_p : (x > state.xn) ? state.ec_n : cosInterpolate(state.ec_p, state.ec_n, (x - state.xp) / (state.xn - state.xp));
+                if (x === 0) bandCtx.moveTo(x, y);
+                else bandCtx.lineTo(x, y);
+            }
+            bandCtx.stroke();
+
+            bandCtx.strokeStyle = colorEv;
+            bandCtx.beginPath();
+            for (let x = 0; x <= 550; x++) {
+                let y = (x < state.xp) ? state.ev_p : (x > state.xn) ? state.ev_n : cosInterpolate(state.ev_p, state.ev_n, (x - state.xp) / (state.xn - state.xp));
+                if (x === 0) bandCtx.moveTo(x, y);
+                else bandCtx.lineTo(x, y);
+            }
+            bandCtx.stroke();
+
+            bandCtx.strokeStyle = colorEf;
+            bandCtx.setLineDash([8, 8]);
+            bandCtx.beginPath(); bandCtx.moveTo(0, state.ef_p); bandCtx.lineTo(state.xp, state.ef_p); bandCtx.stroke();
+            bandCtx.beginPath(); bandCtx.moveTo(state.xn, state.ef_n); bandCtx.lineTo(550, state.ef_n); bandCtx.stroke();
+            bandCtx.setLineDash([]); 
+
+            if (state.v_bias < state.v_br) {
+                bandCtx.strokeStyle = "#e74c3c";
+                bandCtx.lineWidth = 2;
+                bandCtx.setLineDash([4, 4]);
+                bandCtx.beginPath();
+                bandCtx.moveTo(state.xp, state.ev_p);
+                bandCtx.lineTo(state.xn, state.ev_p);
+                bandCtx.stroke();
+                bandCtx.setLineDash([]);
+                
+                bandCtx.fillStyle = "#e74c3c";
+                bandCtx.font = "bold 12px Arial";
+                bandCtx.fillText("Zener / Avalanche Effect ->", state.xp + 10, state.ev_p - 10);
+            }
+
+            bandCtx.fillStyle = colorEc;
+            bandCtx.font = "14px Arial";
+            bandCtx.fillText("Ec", 10, state.ec_p - 10);
+            bandCtx.fillStyle = colorEv;
+            bandCtx.fillText("Ev", 10, state.ev_p + 20);
+            bandCtx.fillStyle = colorEf;
+            bandCtx.fillText("Ef_p", 10, state.ef_p - 5);
+            bandCtx.fillText("Ef_n", 510, state.ef_n - 5);
+
+            drawParticles(bandCtx, state, 'band');
+        }
+
+        function drawParticles(ctx, state, view) {
+            let spawnRate = 0;
+            let baseSpeed = 0;
+            let spawnX = 0;
+            let moveDir = 1;
+
+            if (state.v_bias > 0.02) {
+                spawnRate = 0.05 + state.current * 0.05; 
+                baseSpeed = 1 + state.current * 0.5;
+                spawnX = -10;
+                moveDir = 1;
+            } else if (state.v_bias < state.v_br) {
+                spawnRate = 0.5 + Math.abs(state.current) * 0.02; 
+                baseSpeed = 3 + Math.abs(state.current) * 0.1;    
+                spawnX = state.xn + 10;
+                moveDir = -1;
+            } else if (state.v_bias < -0.02) {
+                spawnRate = 0.01; 
+                baseSpeed = 0.3; 
+                spawnX = 560;
+                moveDir = -1;
+            }
+
+            if (Math.random() < spawnRate) {
+                particles.push({
+                    x: spawnX,
+                    yBase: Math.random(), 
+                    speed: baseSpeed * moveDir
+                });
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                let drawY = 0;
+
+                if (view === 'cross') {
+                    drawY = 30 + p.yBase * 90; 
+                } else if (view === 'band') {
+                    drawY = (p.x < state.xp) ? state.ev_p : (p.x > state.xn) ? state.ev_n : cosInterpolate(state.ev_p, state.ev_n, (p.x - state.xp) / (state.xn - state.xp));
+                    drawY += 8; 
+                }
+
+                ctx.fillStyle = colorHole;
+                ctx.strokeStyle = state.v_bias < state.v_br ? "#e74c3c" : colorEv; 
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(p.x, drawY, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                
+                p.x += p.speed; 
+                if (view === 'cross') {
+                    if (p.x < -20 || p.x > 570) particles.splice(i, 1);
+                }
+            }
+        }
+
+        function drawIVCurve(state) {
+            ivCtx.clearRect(0, 0, 350, 505);
+            
+            const padX = 40;
+            const padY = 40;
+            const w = 350 - padX * 2;
+            const h = 505 - padY * 2;
+
+            const minV = -10, maxV = 1.2;
+            const scaleX = w / (maxV - minV);
+            const minI = -30, maxI = 15;
+            const scaleY = h / (maxI - minI);
+
+            let originX = padX + (0 - minV) * scaleX;
+            let originY = padY + h - (0 - minI) * scaleY;
+
+            ivCtx.strokeStyle = "#ccc";
+            ivCtx.lineWidth = 1.5;
+            ivCtx.beginPath();
+            ivCtx.moveTo(padX, originY); ivCtx.lineTo(padX + w + 10, originY); 
+            ivCtx.moveTo(originX, padY - 10); ivCtx.lineTo(originX, padY + h); 
+            ivCtx.stroke();
+            
+            ivCtx.fillStyle = "#000";
+            ivCtx.font = "12px Arial";
+            ivCtx.fillText("V_bias (V)", padX + w - 40, originY - 10);
+            ivCtx.fillText("Id (mA)", originX + 5, padY - 10);
+
+            let vbrX = padX + (state.v_br - minV) * scaleX;
+            ivCtx.strokeStyle = "#e74c3c";
+            ivCtx.setLineDash([5, 5]);
+            ivCtx.beginPath();
+            ivCtx.moveTo(vbrX, padY);
+            ivCtx.lineTo(vbrX, padY + h);
+            ivCtx.stroke();
+            ivCtx.setLineDash([]);
+            ivCtx.fillStyle = "#e74c3c";
+            ivCtx.fillText("V_br (" + state.v_br.toFixed(1) + "V)", vbrX - 45, originY + 20);
+
+            ivCtx.strokeStyle = "#2980b9";
+            ivCtx.lineWidth = 2;
+            ivCtx.beginPath();
+            
+            // 根據當下濃度繪製整條 I-V 理論曲線
+            for (let v = minV; v <= 1.0; v += 0.05) {
+                let id = state.is * (Math.exp(v / state.vt) - 1);
+                if (v < state.v_br) {
+                    id -= 2.0 * Math.pow(Math.abs(v - state.v_br), 2);
+                }
+                
+                if (id > maxI) id = maxI + 1;
+                if (id < minI) id = minI - 1;
+                
+                let px = padX + (v - minV) * scaleX;
+                let py = padY + h - (id - minI) * scaleY;
+                
+                if (v === minV) ivCtx.moveTo(px, py);
+                else ivCtx.lineTo(px, py);
+            }
+            ivCtx.stroke();
+
+            let pointX = padX + (state.v_bias - minV) * scaleX;
+            let pointY = padY + h - (state.current - minI) * scaleY;
+            if (pointY < padY) pointY = padY; 
+
+            ivCtx.fillStyle = state.v_bias < state.v_br ? "#e74c3c" : "red";
+            ivCtx.beginPath();
+            ivCtx.arc(pointX, pointY, 6, 0, Math.PI * 2);
+            ivCtx.fill();
+            
+            ivCtx.strokeStyle = "rgba(255,0,0,0.5)";
+            ivCtx.setLineDash([4, 4]);
+            ivCtx.beginPath();
+            ivCtx.moveTo(pointX, originY);
+            ivCtx.lineTo(pointX, pointY);
+            ivCtx.lineTo(originX, pointY);
+            ivCtx.stroke();
+            ivCtx.setLineDash([]); 
+            
+            ivCtx.fillStyle = state.v_bias < state.v_br ? "#e74c3c" : "red";
+            ivCtx.fillText("Operating Point", pointX + 10, pointY - 10);
+        }
+
+        function animate() {
+            updateUI();
+            const state = getState();
+            drawCrossSection(state);
+            drawBands(state);
+            drawIVCurve(state);
+            requestAnimationFrame(animate);
+        }
+
+        biasSlider.addEventListener('input', updateUI);
+        dopingPSlider.addEventListener('input', updateUI);
+        dopingNSlider.addEventListener('input', updateUI);
+        animate();
+
+    </script>
+</body>
+</html>

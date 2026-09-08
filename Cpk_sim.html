@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cpk 能力互動模擬器</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,"Microsoft JhengHei",sans-serif;background:#f5f7fb;color:#1f2937}
+.wrap{max-width:1650px;margin:20px auto;padding:0 18px}
+h1{margin:0 0 4px;font-size:28px}
+.sub{color:#64748b;margin-bottom:14px}
+.panel{background:white;border:1px solid #dbe2ea;border-radius:14px;box-shadow:0 4px 16px #0000000b}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:16px 20px}
+.control label{display:flex;justify-content:space-between;font-weight:700}
+input[type=range]{width:100%;accent-color:#2563eb}
+.value{color:#2563eb;font-size:18px}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:14px 20px}
+.card{padding:13px;border-radius:10px;background:#f8fafc;text-align:center;border:1px solid #e5e7eb}
+.card b{display:block;font-size:25px;margin-top:3px}
+.good{color:#16803c}.warn{color:#c77700}.bad{color:#d22}
+.main{display:grid;grid-template-columns:1fr 750px;gap:14px;margin-top:14px}
+.chartbox{padding:14px}
+canvas{display:block;width:100%;height:auto}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin:8px 4px 0}
+.dot{display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:-1px;margin-right:4px}
+.note{padding:12px 20px;font-size:13px;color:#64748b}
+button{border:0;border-radius:8px;padding:8px 13px;background:#2563eb;color:white;cursor:pointer}
+@media(max-width:600px){.main{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📈 Cpk Process Capability Interactive Simulator</h1>
+  <div class="sub">Owner:Tzuyi</div>
+
+  <div class="panel">
+    <div class="controls">
+      <div class="control">
+        <label><span>平均值 μ</span><span class="value" id="muVal"></span></label>
+        <input id="mu" type="range" min="85" max="115" step="0.1" value="100">
+      </div>
+      <div class="control">
+        <label><span>標準差 σ</span><span class="value" id="sigmaVal"></span></label>
+        <input id="sigma" type="range" min="0.5" max="8" step="0.1" value="3">
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="card">Ca <b id="ca">-</b><small>偏移能力</small></div>
+      <div class="card">Cp <b id="cp">-</b><small>潛在能力</small></div>
+      <div class="card">Cpk <b id="cpk">-</b><small>實際能力</small></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="panel chartbox">
+      <h3>① 製程常態分佈</h3>
+      <canvas id="dist" width="500" height="300"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:#2563eb"></i>常態分佈</span>
+        <span><i class="dot" style="background:#dc2626"></i>USL / LSL</span>
+        <span><i class="dot" style="background:#16a34a"></i>平均值 μ</span>
+      </div>
+    </div>
+
+    <div class="panel chartbox">
+      <h3>② Trend Chart ↔ 90°常態分佈</h3>
+      <canvas id="trend" width="500" height="300"></canvas>
+      <div class="note">右側分佈圖與左側 Trend Chart 共用同一個量測尺度；每個資料點皆依目前 μ、σ 重新產生。</div>
+    </div>
+  </div>
+
+  <div class="panel note" style="margin-top:14px">
+    <b>規格：</b> LSL = 70　|　Target = 100　|　USL = 130　
+   　<b>公式：</b> Ca = |μ−Target| / ((USL−LSL)/2)，Cp = (USL−LSL)/(6σ)，Cpk = min(Cpu,Cpl)
+   　<button id="regen">重新產生資料</button>
+  </div>
+</div>
+
+<script>
+const muEl=document.getElementById("mu"), sigmaEl=document.getElementById("sigma");
+const muVal=document.getElementById("muVal"), sigmaVal=document.getElementById("sigmaVal");
+const LSL=70, TARGET=100, USL=130, N=70;
+let seed=12345;
+
+function randn(){
+  seed=(seed*1664525+1013904223)>>>0;
+  const u1=(seed+1)/4294967297;
+  seed=(seed*1664525+1013904223)>>>0;
+  const u2=(seed+1)/4294967297;
+  return Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
+}
+function normalPdf(x,mu,s){return Math.exp(-0.5*((x-mu)/s)**2)/(s*Math.sqrt(2*Math.PI));}
+
+function update(){
+  const mu=+muEl.value, s=+sigmaEl.value;
+  muVal.textContent=mu.toFixed(1);
+  sigmaVal.textContent=s.toFixed(1);
+
+  const ca=Math.abs(mu-TARGET)/15;
+  const cp=30/(6*s);
+  const cpu=(USL-mu)/(3*s), cpl=(mu-LSL)/(3*s);
+  const cpk=Math.min(cpu,cpl);
+  document.getElementById("ca").textContent=ca.toFixed(3);
+  document.getElementById("cp").textContent=cp.toFixed(3);
+  document.getElementById("cpk").textContent=cpk.toFixed(3);
+
+  const cpkEl=document.getElementById("cpk");
+  cpkEl.className=cpk>=1.33?"good":cpk>=1?"warn":"bad";
+
+  drawDistribution(mu,s);
+  drawTrend(mu,s);
+}
+
+function drawDistribution(mu,s){
+  const c=document.getElementById("dist"),ctx=c.getContext("2d");
+  const W=c.width,H=c.height; ctx.clearRect(0,0,W,H);
+  const L=65,R=25,T=30,B=48, pw=W-L-R, ph=H-T-B;
+  const xmin=65,xmax=135, ymax=normalPdf(mu,mu,s)*1.12;
+  const X=x=>L+(x-xmin)/(xmax-xmin)*pw;
+  const Y=y=>T+ph-y/ymax*ph;
+
+  ctx.strokeStyle="#cbd5e1";ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(L,T+ph);ctx.lineTo(W-R,T+ph);ctx.stroke();
+  for(let x=70;x<=130;x+=10){
+    ctx.fillStyle="#64748b";ctx.font="13px Arial";ctx.textAlign="center";
+    ctx.fillText(x,X(x),T+ph+24);
+    ctx.strokeStyle="#e5e7eb";ctx.beginPath();ctx.moveTo(X(x),T);ctx.lineTo(X(x),T+ph);ctx.stroke();
+  }
+
+  // ±3σ visual band
+  ctx.fillStyle="rgba(37,99,235,.10)";
+  ctx.beginPath();ctx.moveTo(X(mu-3*s),T+ph);
+  for(let i=0;i<=160;i++){let x=mu-3*s+6*s*i/160;ctx.lineTo(X(x),Y(normalPdf(x,mu,s)));}
+  ctx.lineTo(X(mu+3*s),T+ph);ctx.closePath();ctx.fill();
+
+  ctx.strokeStyle="#2563eb";ctx.lineWidth=3;ctx.beginPath();
+  for(let i=0;i<=300;i++){
+    let x=xmin+(xmax-xmin)*i/300, y=normalPdf(x,mu,s);
+    i?ctx.lineTo(X(x),Y(y)):ctx.moveTo(X(x),Y(y));
+  }ctx.stroke();
+
+  function spec(x,label){
+    ctx.strokeStyle="#dc2626";ctx.lineWidth=2;ctx.setLineDash([7,5]);
+    ctx.beginPath();ctx.moveTo(X(x),T);ctx.lineTo(X(x),T+ph);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle="#dc2626";ctx.font="bold 14px Arial";ctx.textAlign="center";ctx.fillText(label,X(x),T+15);
+  }
+  spec(LSL,"LSL");spec(USL,"USL");
+
+  ctx.strokeStyle="#16a34a";ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(X(mu),T);ctx.lineTo(X(mu),T+ph);ctx.stroke();
+  ctx.fillStyle="#16a34a";ctx.font="bold 14px Arial";ctx.fillText("μ",X(mu),T+34);
+
+  ctx.fillStyle="#334155";ctx.textAlign="left";ctx.font="13px Arial";
+  ctx.fillText("μ−3σ",X(mu-3*s)-20,T+ph-8);
+  ctx.fillText("μ+3σ",X(mu+3*s)-20,T+ph-8);
+}
+
+function drawTrend(mu,s){
+  const c=document.getElementById("trend"),ctx=c.getContext("2d");
+  const W=c.width,H=c.height;ctx.clearRect(0,0,W,H);
+  const L=42,R=115,T=28,B=38,pw=W-L-R,ph=H-T-B;
+  const ymin=65,ymax=135;
+  const Y=v=>T+(ymax-v)/(ymax-ymin)*ph;
+  const X=i=>L+i/(N-1)*pw;
+
+  ctx.strokeStyle="#e2e8f0";ctx.lineWidth=1;
+  for(let v=70;v<=130;v+=10){ctx.beginPath();ctx.moveTo(L,Y(v));ctx.lineTo(W-R,Y(v));ctx.stroke();
+    ctx.fillStyle="#64748b";ctx.font="12px Arial";ctx.textAlign="right";ctx.fillText(v,L-7,Y(v)+4);
+  }
+
+  // spec / mean
+  function hline(v,label,style){
+    ctx.strokeStyle=style;ctx.lineWidth=2;ctx.setLineDash([6,4]);
+    ctx.beginPath();ctx.moveTo(L,Y(v));ctx.lineTo(W-R,Y(v));ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=style;ctx.font="bold 12px Arial";ctx.textAlign="left";ctx.fillText(label,W-R+7,Y(v)+4);
+  }
+  hline(LSL,"LSL","#dc2626");hline(USL,"USL","#dc2626");
+  hline(mu,"μ","#16a34a");
+
+  seed=Math.floor(mu*1000+s*100);
+  const data=Array.from({length:N},()=>mu+s*randn());
+  ctx.strokeStyle="#2563eb";ctx.lineWidth=2;ctx.beginPath();
+  data.forEach((v,i)=>i?ctx.lineTo(X(i),Y(v)):ctx.moveTo(X(i),Y(v)));ctx.stroke();
+  data.forEach((v,i)=>{
+    const out=v<LSL||v>USL;
+    ctx.fillStyle=out?"#dc2626":"#2563eb";
+    ctx.beginPath();ctx.arc(X(i),Y(v),3.2,0,Math.PI*2);ctx.fill();
+  });
+
+  // right-side rotated density, centered on mu, same vertical scale
+  const dx0=W-R+17, dx1=W-10;
+  let maxpdf=normalPdf(mu,mu,s);
+  ctx.fillStyle="rgba(37,99,235,.13)";
+  ctx.beginPath();ctx.moveTo(dx0,Y(ymin));
+  for(let i=0;i<=180;i++){
+    const v=ymin+(ymax-ymin)*i/180;
+    const xx=dx0+(normalPdf(v,mu,s)/maxpdf)*(dx1-dx0)*0.92;
+    ctx.lineTo(xx,Y(v));
+  }
+  ctx.lineTo(dx0,Y(ymax));ctx.closePath();ctx.fill();
+
+  ctx.strokeStyle="#2563eb";ctx.lineWidth=2;ctx.beginPath();
+  for(let i=0;i<=220;i++){
+    const v=ymin+(ymax-ymin)*i/220;
+    const xx=dx0+(normalPdf(v,mu,s)/maxpdf)*(dx1-dx0)*0.92;
+    i?ctx.lineTo(xx,Y(v)):ctx.moveTo(xx,Y(v));
+  }ctx.stroke();
+
+  ctx.fillStyle="#475569";ctx.font="11px Arial";ctx.textAlign="center";
+  ctx.fillText("90° Normal",dx0+32,18);
+  ctx.fillText("樣本",L, H-12);
+}
+
+muEl.oninput=update;sigmaEl.oninput=update;
+document.getElementById("regen").onclick=()=>{seed=Date.now()&0xffffffff;update()};
+update();
+</script>
+</body>
+</html>
