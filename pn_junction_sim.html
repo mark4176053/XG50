@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PN Junction 特性模擬</title>
+    <title>PN Junction 特性</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -31,7 +31,7 @@
             padding: 20px;
             border-radius: 12px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            max-width: 1200px;
+            max-width: 1600px;
         }
         .controls {
             width: 100%;
@@ -95,41 +95,44 @@
 </head>
 <body>
 
-    <h1>PN Junction 特性模擬</h1>
-    <h2>Owner:Tzuyi</h2>    
-
+    <h1>PN Junction 特性</h1>
+    <h2>Owner:Tzuyi</h2>   
+    
     <div class="container">
         <!-- 控制面板 -->
         <div class="controls">
             <div class="slider-group" style="background: #fcf3cf; padding: 10px; border-radius: 8px;">
                 <label for="bias">外加偏壓 (V_bias): <span id="bias-val">0.00</span> V</label>
                 <div style="font-size:12px; color:#555; margin-bottom:5px;">範圍: -10V(逆偏) ~ +0.9V(順偏)</div>
-                <input type="range" id="bias" min="-10" max="0.9" step="0.1" value="0">
+                <input type="range" id="bias" min="-10" max="1.0" step="0.1" value="0">
             </div>
             <div class="slider-group">
                 <label for="dopingP">P-type 摻雜濃度 (Na): <span id="dopingP-val">5</span></label>
-                <div style="font-size:11px; color:#777;">(相對值 1~10，Step=1)</div>
-                <input type="range" id="dopingP" min="1" max="10" step="1" value="5">
+                <div style="font-size:11px; color:#777;">將 Ef_p 推向 Ev，但不超過 Ei (1~10)</div>
+                <input type="range" id="dopingP" min="2" max="8" step="1" value="5">
             </div>
             <div class="slider-group">
                 <label for="dopingN">N-type 摻雜濃度 (Nd): <span id="dopingN-val">5</span></label>
-                <div style="font-size:11px; color:#777;">(相對值 1~10，Step=1)</div>
-                <input type="range" id="dopingN" min="1" max="10" step="1" value="5">
+                <div style="font-size:11px; color:#777;">將 Ef_n 推向 Ec，但不超過 Ei (1~10)</div>
+                <input type="range" id="dopingN" min="2" max="8" step="1" value="5">
             </div>
             
+
+        </div>
+
         <!-- 視覺化圖表區 -->
         <div class="canvas-column">
             <h3>PN 接面橫截面模擬</h3>
             <canvas id="crossCanvas" width="550" height="150"></canvas>
             
             <h3>能帶圖 (Energy Band Diagram)</h3>
-            <canvas id="bandCanvas" width="550" height="320"></canvas>
+            <canvas id="bandCanvas" width="550" height="400"></canvas>
             <div id="status-display" class="status status-normal">狀態: 平衡狀態 | Id = 0.00 mA</div>
         </div>
 
         <div class="canvas-column">
             <h3>I-V 曲線與崩潰特性 (動態計算)</h3>
-            <canvas id="ivCanvas" width="350" height="505"></canvas>
+            <canvas id="ivCanvas" width="550" height="450"></canvas>
         </div>
     </div>
 
@@ -152,6 +155,7 @@
         const colorEc = "#c0392b"; 
         const colorEv = "#2980b9"; 
         const colorEf = "#27ae60"; 
+        const colorEi = "#9b59b6"; // 本質費米能階顏色 (紫色)
         const colorHole = "#ffffff"; 
 
         let particles = [];
@@ -166,11 +170,10 @@
             let na = parseInt(dopingPSlider.value);
             let nd = parseInt(dopingNSlider.value);
 
-            // 1. 動態崩潰電壓 V_br (摻雜濃度越高，|V_br| 越小)
-            // 範圍約為 -9.5V (Na=1, Nd=1) 到 -2.3V (Na=10, Nd=10)
+            // 1. 動態崩潰電壓 V_br
             let v_br = -(1.5 + 8.0 / Math.sqrt(na * nd));
 
-            // 2. 內建電位 V_bi (摻雜濃度越高，V_bi 越大)
+            // 2. 內建電位 V_bi
             let v_bi = 0.5 + 0.03 * (na + nd);
             if (v_bias >= v_bi - 0.05) v_bias = v_bi - 0.05; 
 
@@ -184,22 +187,32 @@
             let xp = center - w * (nd / (na + nd));
             let xn = center + w * (na / (na + nd));
 
-            let eg = 60; 
-            let ef_n = 230; 
-            let ec_n = ef_n - (10 + nd * 2.5); 
-            let ev_n = ec_n + eg;
+            // --- 重新設計的能帶幾何 (以 Ef_n 和 Ei 為基準) ---
+            let eg_half = 50; // 導帶/價帶距離本質費米能階 Ei 的像素距離 (總能隙 = 100)
+            
+            // N 區 (右側) - Ef_n 固定作為畫布參考點
+            let ef_n = 220; 
+            // N type: Ef 高於 Ei (Y座標 Ef < Ei)
+            // Nd=1..10，距離=4~40。絕不會超過 eg_half(50)
+            let ei_n = ef_n + (nd * 4); 
+            let ec_n = ei_n - eg_half; 
+            let ev_n = ei_n + eg_half;
 
-            let ef_p = ef_n + (v_bias * 15); 
-            let ev_p = ef_p + (10 + na * 2.5);
-            let ec_p = ev_p - eg;
+            // P 區 (左側) - Ef_p 受偏壓控制
+            // 順偏(正電壓)時，P區能量下降 (Y座標上升)
+            let ef_p = ef_n + (v_bias * 20); 
+            // P type: Ef 低於 Ei (Y座標 Ef > Ei)
+            // Na=1..10，距離=4~40。絕不會超過 eg_half(50)
+            let ei_p = ef_p - (na * 4);
+            let ec_p = ei_p - eg_half;
+            let ev_p = ei_p + eg_half;
 
-            // 3. 動態逆向飽和電流 Is (濃度越高，Is 越小，順向曲線向右偏移)
+            // 3. 動態逆向飽和電流 Is
             let is = 0.002 * (1/na + 1/nd); 
             let vt = 0.065; 
             
             let current = is * (Math.exp(v_bias / vt) - 1);
             
-            // 崩潰區電流飆升計算
             if (v_bias < v_br) {
                 current -= 2.0 * Math.pow(Math.abs(v_bias - v_br), 2);
             }
@@ -210,7 +223,7 @@
             else if (v_bias < -0.02) mode = "逆向偏壓 (Reverse Bias)";
             else mode = "平衡狀態 (Equilibrium)";
 
-            return { v_bias, v_br, v_bi, na, nd, xp, xn, center, barrier, ec_n, ev_n, ef_n, ec_p, ev_p, ef_p, is, vt, current, mode };
+            return { v_bias, v_br, v_bi, na, nd, xp, xn, center, barrier, ec_n, ev_n, ef_n, ei_n, ec_p, ev_p, ef_p, ei_p, is, vt, current, mode };
         }
 
         function updateUI() {
@@ -258,42 +271,58 @@
         }
 
         function drawBands(state) {
-            bandCtx.clearRect(0, 0, 550, 320);
+            bandCtx.clearRect(0, 0, 550, 340);
             bandCtx.fillStyle = colorPType;
-            bandCtx.fillRect(0, 0, state.xp, 320);
+            bandCtx.fillRect(0, 0, state.xp, 340);
             bandCtx.fillStyle = colorNType;
-            bandCtx.fillRect(state.xn, 0, 550 - state.xn, 320);
+            bandCtx.fillRect(state.xn, 0, 550 - state.xn, 340);
             
             if (state.v_bias < state.v_br) bandCtx.fillStyle = "rgba(231, 76, 60, 0.1)";
             else bandCtx.fillStyle = colorDepletion;
-            bandCtx.fillRect(state.xp, 0, state.xn - state.xp, 320);
+            bandCtx.fillRect(state.xp, 0, state.xn - state.xp, 340);
 
             bandCtx.lineWidth = 3;
 
+            // 1. 畫 Ec
             bandCtx.strokeStyle = colorEc;
             bandCtx.beginPath();
             for (let x = 0; x <= 550; x++) {
                 let y = (x < state.xp) ? state.ec_p : (x > state.xn) ? state.ec_n : cosInterpolate(state.ec_p, state.ec_n, (x - state.xp) / (state.xn - state.xp));
-                if (x === 0) bandCtx.moveTo(x, y);
-                else bandCtx.lineTo(x, y);
+                if (x === 0) bandCtx.moveTo(x, y); else bandCtx.lineTo(x, y);
             }
             bandCtx.stroke();
 
+            // 2. 畫 Ei (本質費米能階 - 點虛線)
+            bandCtx.strokeStyle = colorEi;
+            bandCtx.lineWidth = 2;
+            bandCtx.setLineDash([4, 4]);
+            bandCtx.beginPath();
+            for (let x = 0; x <= 550; x++) {
+                let y = (x < state.xp) ? state.ei_p : (x > state.xn) ? state.ei_n : cosInterpolate(state.ei_p, state.ei_n, (x - state.xp) / (state.xn - state.xp));
+                if (x === 0) bandCtx.moveTo(x, y); else bandCtx.lineTo(x, y);
+            }
+            bandCtx.stroke();
+            bandCtx.setLineDash([]); // Reset
+
+            // 3. 畫 Ev
+            bandCtx.lineWidth = 3;
             bandCtx.strokeStyle = colorEv;
             bandCtx.beginPath();
             for (let x = 0; x <= 550; x++) {
                 let y = (x < state.xp) ? state.ev_p : (x > state.xn) ? state.ev_n : cosInterpolate(state.ev_p, state.ev_n, (x - state.xp) / (state.xn - state.xp));
-                if (x === 0) bandCtx.moveTo(x, y);
-                else bandCtx.lineTo(x, y);
+                if (x === 0) bandCtx.moveTo(x, y); else bandCtx.lineTo(x, y);
             }
             bandCtx.stroke();
 
+            // 4. 畫 Ef (實際費米能階)
+            bandCtx.lineWidth = 2;
             bandCtx.strokeStyle = colorEf;
             bandCtx.setLineDash([8, 8]);
             bandCtx.beginPath(); bandCtx.moveTo(0, state.ef_p); bandCtx.lineTo(state.xp, state.ef_p); bandCtx.stroke();
             bandCtx.beginPath(); bandCtx.moveTo(state.xn, state.ef_n); bandCtx.lineTo(550, state.ef_n); bandCtx.stroke();
             bandCtx.setLineDash([]); 
 
+            // 崩潰視覺特效
             if (state.v_bias < state.v_br) {
                 bandCtx.strokeStyle = "#e74c3c";
                 bandCtx.lineWidth = 2;
@@ -309,14 +338,12 @@
                 bandCtx.fillText("Zener / Avalanche Effect ->", state.xp + 10, state.ev_p - 10);
             }
 
-            bandCtx.fillStyle = colorEc;
+            // 標籤
             bandCtx.font = "14px Arial";
-            bandCtx.fillText("Ec", 10, state.ec_p - 10);
-            bandCtx.fillStyle = colorEv;
-            bandCtx.fillText("Ev", 10, state.ev_p + 20);
-            bandCtx.fillStyle = colorEf;
-            bandCtx.fillText("Ef_p", 10, state.ef_p - 5);
-            bandCtx.fillText("Ef_n", 510, state.ef_n - 5);
+            bandCtx.fillStyle = colorEc; bandCtx.fillText("Ec", 10, state.ec_p - 10);
+            bandCtx.fillStyle = colorEv; bandCtx.fillText("Ev", 10, state.ev_p + 20);
+            bandCtx.fillStyle = colorEf; bandCtx.fillText("Ef_p", 10, state.ef_p - 5); bandCtx.fillText("Ef_n", 510, state.ef_n - 5);
+            bandCtx.fillStyle = colorEi; bandCtx.fillText("Ei", 10, state.ei_p + 15); bandCtx.fillText("Ei", 510, state.ei_n + 15);
 
             drawParticles(bandCtx, state, 'band');
         }
@@ -379,12 +406,12 @@
         }
 
         function drawIVCurve(state) {
-            ivCtx.clearRect(0, 0, 350, 505);
+            ivCtx.clearRect(0, 0, 350, 525);
             
             const padX = 40;
             const padY = 40;
             const w = 350 - padX * 2;
-            const h = 505 - padY * 2;
+            const h = 525 - padY * 2;
 
             const minV = -10, maxV = 1.2;
             const scaleX = w / (maxV - minV);
@@ -421,7 +448,6 @@
             ivCtx.lineWidth = 2;
             ivCtx.beginPath();
             
-            // 根據當下濃度繪製整條 I-V 理論曲線
             for (let v = minV; v <= 1.0; v += 0.05) {
                 let id = state.is * (Math.exp(v / state.vt) - 1);
                 if (v < state.v_br) {
