@@ -38,11 +38,11 @@ button{border:0;border-radius:8px;padding:8px 13px;background:#2563eb;color:whit
     <div class="controls">
       <div class="control">
         <label><span>平均值 μ</span><span class="value" id="muVal"></span></label>
-        <input id="mu" type="range" min="85" max="115" step="0.1" value="100">
+        <input id="mu" type="range" min="70" max="130" step="1" value="100">
       </div>
       <div class="control">
         <label><span>標準差 σ</span><span class="value" id="sigmaVal"></span></label>
-        <input id="sigma" type="range" min="0.5" max="8" step="0.1" value="3">
+        <input id="sigma" type="range" min="1" max="30" step="1" value="3">
       </div>
     </div>
 
@@ -73,7 +73,7 @@ button{border:0;border-radius:8px;padding:8px 13px;background:#2563eb;color:whit
 
   <div class="panel note" style="margin-top:14px">
     <b>規格：</b> LSL = 70　|　Target = 100　|　USL = 130　
-   　<b>公式：</b> Ca = |μ−Target| / ((USL−LSL)/2)，Cp = (USL−LSL)/(6σ)，Cpk = min(Cpu,Cpl)
+   　<b>公式：</b> Ca = |μ−Target| / ((USL−LSL)/2)，Cp = (USL−LSL)/(6σ)，Cpk = |(1-Ca)|*Cp
    　<button id="regen">重新產生資料</button>
   </div>
 </div>
@@ -98,10 +98,10 @@ function update(){
   muVal.textContent=mu.toFixed(1);
   sigmaVal.textContent=s.toFixed(1);
 
-  const ca=Math.abs(mu-TARGET)/15;
-  const cp=30/(6*s);
+  const ca=Math.abs(mu-TARGET)/30;
+  const cp=60/(6*s);
   const cpu=(USL-mu)/(3*s), cpl=(mu-LSL)/(3*s);
-  const cpk=Math.min(cpu,cpl);
+  const cpk=Math.abs(1-ca)*cp;
   document.getElementById("ca").textContent=ca.toFixed(3);
   document.getElementById("cp").textContent=cp.toFixed(3);
   document.getElementById("cpk").textContent=cpk.toFixed(3);
